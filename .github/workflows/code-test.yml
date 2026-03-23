@@ -1,8 +1,6 @@
 name: Claude Code
 
 on:
-  push:
-    branches: [develop]
   pull_request:
     types: [opened, synchronize]
   issue_comment:
@@ -48,7 +46,7 @@ jobs:
   # ---------------------------------------------------------------------------
   claude-test-generator:
     name: Claude — Analyze, Generate & Run Tests
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
