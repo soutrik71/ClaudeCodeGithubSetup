@@ -228,29 +228,63 @@ This is what blocks a PR from merging when tests fail.
 
 ---
 
-### Phase 4 — The workflow file golden rule
+### Phase 4 — Updating the CI pipeline when branch protection is active
 
 > **Never include changes to `.github/workflows/code-test.yml` in a feature PR.**
 
-If you modify the workflow file in a PR, the OIDC validation blocks the action on that PR (same 401 as the bootstrap case). This is permanent by design.
+If you modify the workflow file in a PR, the OIDC validation blocks the action on that PR (same 401 as the bootstrap case). This is permanent by design — Anthropic's backend rejects any token exchange where the workflow on the PR branch differs from `main`.
 
-**How to update the workflow safely:**
+This creates a chicken-and-egg problem when branch protection is enabled: you can't push directly to `main` (branch protection blocks it), and you can't merge via PR (OIDC validation blocks the action, and the required status check never passes).
+
+**The correct process — follow these steps every time you update the workflow:**
+
+#### Step 1 — Temporarily disable the branch protection ruleset
+
+1. GitHub repo → **Settings → Branches**
+2. Click **Edit** on the `main` branch protection rule
+3. Uncheck **"Require status checks to pass before merging"**
+4. Click **Save changes**
+
+This allows a direct push or a merge without the status check requirement.
+
+#### Step 2 — Push the workflow changes directly to `main`
 
 ```bash
-# 1. Create a dedicated branch for workflow changes only
-git checkout -b update-workflow main
+# Make your changes locally on main (or merge from a branch)
+git checkout main
+git pull origin main
 
-# 2. Edit the workflow file
+# Edit the workflow file
 # ... make your changes to .github/workflows/code-test.yml ...
 
-# 3. Push and open a PR
-git push origin update-workflow
-# Open PR: update-workflow → main
+git add .github/workflows/code-test.yml
+git commit -m "ci: update workflow - <describe your change>"
+git push origin main
+```
 
-# 4. The claude-test-generator job will skip on this PR (expected)
-# Merge it via GitHub UI
+Or if your changes are on a separate branch:
 
-# 5. All subsequent feature PRs now use the updated workflow
+```bash
+git checkout main
+git merge your-workflow-branch --no-ff -m "ci: update workflow - <describe your change>"
+git push origin main
+```
+
+#### Step 3 — Re-enable the branch protection ruleset
+
+1. GitHub repo → **Settings → Branches**
+2. Click **Edit** on the `main` branch protection rule
+3. Re-check **"Require status checks to pass before merging"**
+4. Confirm the status check `Claude — Generate Tests / Run pytest & upload report` is still listed
+5. Click **Save changes**
+
+All subsequent feature PRs will now use the updated workflow and the merge gate is active again.
+
+#### Summary of the full cycle
+
+```text
+Normal feature PRs:   branch → PR → tests pass → merge ✅
+Workflow changes:     disable ruleset → push to main → re-enable ruleset
 ```
 
 ---
@@ -288,17 +322,13 @@ Splitting generation (Claude) from execution (runner) ensures:
 
 If the workflow file on your PR branch differs from `main`, the OIDC security validation blocks the action with a 401. This is by design — it prevents PRs from hijacking CI permissions.
 
-**Workflow changes must go directly to `main`** (or via a dedicated workflow-only PR that you merge without the action running):
+With branch protection enabled, updating the workflow requires a three-step process:
 
-```bash
-# Make your workflow changes on a dedicated branch
-git checkout -b update-workflow
-# ... edit .github/workflows/code-test.yml ...
-git push origin update-workflow
+1. **Disable** the `main` branch protection ruleset (Settings → Branches → Edit → uncheck status check requirement)
+2. **Push** workflow changes directly to `main`
+3. **Re-enable** the branch protection ruleset
 
-# Then merge directly to main (action will skip on this PR — that's expected)
-# After merge, all subsequent feature PRs will use the updated workflow
-```
+See [Phase 4](#phase-4--updating-the-ci-pipeline-when-branch-protection-is-active) for the full step-by-step walkthrough.
 
 ---
 
