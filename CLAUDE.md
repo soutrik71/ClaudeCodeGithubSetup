@@ -111,8 +111,12 @@ Triggers on every `pull_request` event. Three-step pipeline:
 ### Rules
 
 - **Never modify `.github/workflows/code-test.yml` in a feature PR** — it will break the action for that PR
-- Workflow changes must be pushed directly to `main` or merged via a dedicated workflow-only PR (the action will skip on that PR by design; that is expected)
-- After merging workflow changes to `main`, all subsequent feature PRs will use the updated workflow
+- Workflow changes must be pushed directly to `main`
+- When branch protection is active, this requires a 3-step process:
+  1. **Disable** the ruleset: Settings → Branches → Edit → uncheck status check requirement
+  2. **Push** workflow changes directly to `main`
+  3. **Re-enable** the ruleset: re-check the status check requirement
+- After the push, all subsequent feature PRs will use the updated workflow
 
 ### One-time bootstrap
 
