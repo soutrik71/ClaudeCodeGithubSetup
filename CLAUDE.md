@@ -42,7 +42,7 @@ The app (`app/`) follows a three-layer structure:
 - `routers/` — Three `APIRouter` modules, each owning its own module-level `store = _Store()` instance:
   - `items.py` — prefix `/items`: full CRUD, `GET /search`, pagination via `Depends(pagination)`
   - `users.py` — prefix `/users`: create (API-key guard via `dependencies=[Depends(get_api_key)]`), nested `GET /{user_id}/items`
-  - `products.py` — prefix `/products`: background tasks on create, `GET /category/{category}` with `VALID_CATEGORIES` check
+  - `products.py` — prefix `/products`: background tasks on create, `GET /category/{category}` with `VALID_CATEGORIES` check; invalid category raises `HTTP_422_UNPROCESSABLE_ENTITY` (not `_CONTENT` — that constant doesn't exist in starlette ~0.36)
 
 ### In-memory stores
 
