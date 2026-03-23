@@ -90,6 +90,10 @@ def authed_client():
 
 Triggers when `@claude` appears in an issue body, issue comment, PR review, or PR review comment. Claude responds directly in the thread. Requires `ANTHROPIC_API_KEY` repository secret.
 
+### Workflow-level env
+
+`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` — opts all actions into Node.js 24 now (Node 20 is deprecated; GitHub forces Node 24 by default from June 2026).
+
 ### Job 2 — Claude Test Generator
 
 Triggers on every `pull_request` event. Three-step pipeline:
