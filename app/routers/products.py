@@ -74,7 +74,7 @@ def list_by_category(
     """Return all products in the given category."""
     if category not in VALID_CATEGORIES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown category '{category}'. Valid categories: {sorted(VALID_CATEGORIES)}",
         )
     return [p for p in store.db.values() if p["category"] == category]
