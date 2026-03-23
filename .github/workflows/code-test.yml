@@ -42,10 +42,20 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ---------------------------------------------------------------------------
-  # JOB 2 — Automated: analyze code, generate pytest tests, run & report
+  # JOB 2 — Automated: Claude generates tests → pytest runs → artifact uploaded
+  #
+  # Split into two phases so pytest has a real exit code for branch protection:
+  #   Step A: Claude explores code and WRITES test files (no execution)
+  #   Step B: Runner executes pytest, saves report to test-report/
+  #   Step C: Artifact uploaded (always, even on failure)
+  #
+  # To block merges on test failure:
+  #   GitHub → Settings → Branches → Branch protection rule for `main`
+  #   → "Require status checks to pass before merging"
+  #   → Add: "Claude — Generate Tests / Run pytest & upload report"
   # ---------------------------------------------------------------------------
   claude-test-generator:
-    name: Claude — Analyze, Generate & Run Tests
+    name: Claude — Generate Tests / Run pytest & upload report
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -73,14 +83,19 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Claude Code — Generate Tests, Execute & Report
+      # -----------------------------------------------------------------------
+      # STEP A — Claude explores the codebase and writes test files only.
+      # It does NOT run pytest — that is handled by the next step so the
+      # runner process owns the exit code (needed for branch protection).
+      # -----------------------------------------------------------------------
+      - name: Claude — Analyze codebase & write tests
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             You are a Python test engineer. Your task is to explore this repository,
-            understand what the code does, generate appropriate pytest tests, run them
-            inside the pre-created .venv, and print a complete test report.
+            understand what the code does, and write comprehensive pytest tests.
+            Do NOT execute pytest — a separate CI step will run the tests.
 
             ═══════════════════════════════════════
             PHASE 1 — EXPLORE THE CODEBASE
@@ -92,7 +107,7 @@ jobs:
                 - Data models and validation rules
                 - Error conditions and edge cases
                 - Any existing tests (to avoid duplication)
-            • Check requirements.txt / pyproject.toml for the test framework already in use
+            • Check requirements.txt / pyproject.toml for the test framework in use
 
             ═══════════════════════════════════════
             PHASE 2 — PLAN THE TESTS
@@ -149,35 +164,37 @@ jobs:
             ═══════════════════════════════════════
             PHASE 3 — WRITE THE TESTS
             ═══════════════════════════════════════
-            • Write all tests to the appropriate file under tests/
+            • Write all tests to the appropriate file(s) under tests/
               (create the file if it does not exist; follow existing naming conventions)
             • Aim for maximum coverage of the behaviours you identified
-            • Include a brief comment above each test group explaining what is being tested
-
-            ═══════════════════════════════════════
-            PHASE 4 — RUN THE TESTS
-            ═══════════════════════════════════════
-            Execute:
-              source .venv/bin/activate && python -m pytest tests/ -v --tb=short 2>&1
-
-            ═══════════════════════════════════════
-            PHASE 5 — PRINT THE FULL REPORT
-            ═══════════════════════════════════════
-            Output the complete pytest result verbatim:
-              • Each test name with PASSED / FAILED / ERROR status
-              • Full traceback for any failures
-              • Final summary line (e.g. "32 passed, 2 failed in 1.23s")
-
-            ═══════════════════════════════════════
-            PHASE 6 — FIX FAILURES
-            ═══════════════════════════════════════
-            If any tests failed:
-              1. Read the traceback to understand the root cause
-              2. Fix the test (or the assertion) — do NOT modify source code
-              3. Re-run pytest and repeat until all tests pass
-              4. If a failure reveals a genuine bug in the source, document it
-                 as a comment in the test file instead of forcing the test to pass
+            • Include a brief comment above each test group explaining what is tested
+            • STOP here — do not run pytest
 
           claude_args: >-
-            --max-turns 25
-            --allowedTools "Bash,Read,Write,Edit,Glob"
+            --max-turns 20
+            --allowedTools "Read,Write,Edit,Glob"
+
+      # -----------------------------------------------------------------------
+      # STEP B — Runner executes pytest.
+      # Exit code propagates to the job → branch protection can gate on this.
+      # Output is tee'd to a file for the artifact upload in Step C.
+      # -----------------------------------------------------------------------
+      - name: Run pytest & save report
+        run: |
+          mkdir -p test-report
+          source .venv/bin/activate
+          python -m pytest tests/ -v --tb=short 2>&1 | tee test-report/pytest-report.txt
+          # Preserve pytest's exit code through the pipe
+          exit ${PIPESTATUS[0]}
+
+      # -----------------------------------------------------------------------
+      # STEP C — Upload the report as a GitHub Actions artifact.
+      # `if: always()` ensures upload even when pytest fails.
+      # -----------------------------------------------------------------------
+      - name: Upload pytest report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report
+          path: test-report/pytest-report.txt
+          retention-days: 14
