@@ -97,6 +97,164 @@ To prevent PRs from merging when tests fail:
 
 ---
 
+## Setting up the Claude pytest pipeline — complete walkthrough
+
+This section documents every step taken to build the automated test pipeline, from zero to a working, merge-gated CI system.
+
+### Prerequisites
+
+Before starting, you need:
+
+- A GitHub repository with your Python source code
+- An Anthropic account with API access — get a key at [console.anthropic.com](https://console.anthropic.com)
+- Python 3.11+ in your project
+- `pytest` listed in `requirements.txt` (add it if missing)
+
+Required entries in `requirements.txt`:
+
+```text
+pytest~=8.0.0
+pytest-asyncio~=0.23.0
+httpx~=0.27.0        # needed for FastAPI TestClient
+```
+
+---
+
+### Phase 1 — First-time dependencies and secrets
+
+#### 1.1 Add the Anthropic API key as a repository secret
+
+The workflow uses Claude to generate tests. It needs your API key to call the Claude API.
+
+1. Go to your repo on GitHub
+2. **Settings → Secrets and variables → Actions → New repository secret**
+3. Name: `ANTHROPIC_API_KEY`
+4. Value: your key from Anthropic console
+
+Without this secret, every run of the action will fail with an authentication error.
+
+#### 1.2 Create the workflow file
+
+Create `.github/workflows/code-test.yml` with two jobs (see the file in this repo). Key design decisions made:
+
+**Why two jobs instead of one?**
+
+The initial design had Claude run pytest inside its own session. This was changed because:
+
+- Claude's session exit code doesn't map to a job exit code — branch protection can't act on it
+- There was no way to upload the pytest output as an artifact
+- Claude could silently "fix" a broken test instead of failing the job
+
+The final design separates concerns:
+
+| Job | Owner | Purpose |
+| --- | --- | --- |
+| `claude-interactive` | Claude | Responds to `@claude` mentions |
+| `claude-test-generator` | Claude + Runner | Claude writes tests; runner executes them |
+
+**Why split test generation from test execution inside Job 2?**
+
+```text
+Step A: Claude  → reads source, writes test files to tests/
+Step B: Runner  → runs pytest, real exit code, tee output to file
+Step C: Runner  → uploads pytest-report.txt as artifact (always)
+```
+
+The runner owns the exit code. If pytest fails, the job fails. Branch protection sees this.
+
+**Why `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true`?**
+
+Node.js 20 for GitHub Actions is deprecated — forced to Node 24 from June 2026. Adding this env var at the workflow level opts in now across all actions (`actions/checkout`, `actions/setup-python`, `actions/upload-artifact`, `oven-sh/setup-bun`).
+
+---
+
+### Phase 2 — Bootstrap the workflow onto `main` (one-time)
+
+This is the most commonly misunderstood step.
+
+**Why it's needed:** `anthropics/claude-code-action@v1` uses GitHub OIDC token exchange to authenticate. During the exchange, Anthropic's backend validates that the workflow file on the PR branch is **byte-for-byte identical** to the version on `main`. If the file doesn't exist on `main` yet — or differs — the exchange returns 401 and the action aborts.
+
+This is a security feature, not a bug. It prevents malicious PRs from modifying the workflow to escalate CI permissions.
+
+**The symptom:**
+
+```text
+App token exchange failed: 401 Unauthorized - Workflow validation failed.
+The workflow file must exist and have identical content to the version
+on the repository's default branch.
+```
+
+**The fix — run once, never again:**
+
+```bash
+git checkout main
+git merge develop --no-ff -m "bootstrap: add Claude Code workflow"
+git push origin main
+```
+
+After this merge, every future feature PR that does **not** touch `code-test.yml` will pass the OIDC validation.
+
+---
+
+### Phase 3 — Branch protection ruleset on `main`
+
+This is what blocks a PR from merging when tests fail.
+
+#### 3.1 Navigate to branch protection rules
+
+1. GitHub repo → **Settings → Branches**
+2. Click **Add branch protection rule** (or edit the existing rule for `main`)
+
+#### 3.2 Configure the rule
+
+| Setting | Value |
+| --- | --- |
+| Branch name pattern | `main` |
+| Require a pull request before merging | ✅ Enable |
+| Require status checks to pass before merging | ✅ Enable |
+| Require branches to be up to date before merging | ✅ Recommended |
+| Status check to require | `Claude — Generate Tests / Run pytest & upload report` |
+
+> The status check name must match the `name:` field of the job in `code-test.yml` exactly. The name used is: **`Claude — Generate Tests / Run pytest & upload report`**
+
+#### 3.3 How it behaves after setup
+
+| Scenario | Result |
+| --- | --- |
+| All 121 tests pass | ✅ PR can be merged |
+| Any test fails | ❌ Merge blocked — fix the code or test first |
+| Claude fails to write tests (max turns exceeded) | ❌ Job fails, merge blocked |
+| Pytest report always uploaded | Even on failure — download from Actions → Artifacts |
+
+---
+
+### Phase 4 — The workflow file golden rule
+
+> **Never include changes to `.github/workflows/code-test.yml` in a feature PR.**
+
+If you modify the workflow file in a PR, the OIDC validation blocks the action on that PR (same 401 as the bootstrap case). This is permanent by design.
+
+**How to update the workflow safely:**
+
+```bash
+# 1. Create a dedicated branch for workflow changes only
+git checkout -b update-workflow main
+
+# 2. Edit the workflow file
+# ... make your changes to .github/workflows/code-test.yml ...
+
+# 3. Push and open a PR
+git push origin update-workflow
+# Open PR: update-workflow → main
+
+# 4. The claude-test-generator job will skip on this PR (expected)
+# Merge it via GitHub UI
+
+# 5. All subsequent feature PRs now use the updated workflow
+```
+
+---
+
 ## How the GitHub Actions workflow works
 
 ### Job 1 — `Claude Interactive (@claude)`

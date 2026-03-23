@@ -12,6 +12,10 @@ on:
   pull_request_review:
     types: [submitted]
 
+# Opt into Node.js 24 for all actions (Node 20 deprecated, forced June 2026)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # ---------------------------------------------------------------------------
 # JOB 1 — Interactive: responds to @claude mentions in issues / PRs
 # ---------------------------------------------------------------------------
